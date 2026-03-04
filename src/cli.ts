@@ -29,12 +29,12 @@ async function main() {
   // Generate output path if not provided
   if (!outputPath) {
     const baseName = basename(svgPath, '.svg');
-    outputPath = `${baseName}.key`;
+    outputPath = `${baseName}.pptx`;
   }
 
-  // Ensure output has .key extension
-  if (extname(outputPath).toLowerCase() !== '.key') {
-    outputPath += '.key';
+  // Ensure output has .pptx extension
+  if (extname(outputPath).toLowerCase() !== '.pptx') {
+    outputPath += '.pptx';
   }
 
   try {
@@ -56,25 +56,25 @@ function printHelp() {
 SVG to Keynote Converter
 
 Usage:
-  svgkeynote <input.svg> [output.key]
+  svgkeynote <input.svg> [output.pptx]
 
 Arguments:
-  <input.svg>   Path to the SVG file to convert
-  [output.key]  Path for the output Keynote file (optional)
-                If not provided, uses the input filename with .key extension
+  <input.svg>    Path to the SVG file to convert
+  [output.pptx]  Path for the output file (optional)
+                 If not provided, uses the input filename with .pptx extension
 
 Examples:
   svgkeynote diagram.svg
-  svgkeynote diagram.svg presentation.key
+  svgkeynote diagram.svg presentation.pptx
 
 Options:
   -h, --help    Show this help message
 
 Notes:
-  - The output file will be a valid Keynote presentation (.key)
-  - All SVG shapes are converted to native Keynote shapes
+  - Output is a PPTX file that opens natively in Apple Keynote
+  - All SVG shapes are converted to editable presentation shapes
   - Text, colors, and basic styling are preserved
-  - Complex SVG features may be simplified
+  - Complex SVG features (paths, polygons) are approximated as rectangles
   `);
 }
 

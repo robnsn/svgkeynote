@@ -102,14 +102,14 @@ ipcMain.handle('convert-svg', async (event, svgPath: string) => {
     // Generate output path in the same directory as the SVG
     const directory = path.dirname(svgPath);
     const fileName = path.basename(svgPath, '.svg');
-    const outputPath = path.join(directory, `${fileName}.key`);
+    const outputPath = path.join(directory, `${fileName}.pptx`);
 
     await convertSVGToKeynoteFile(svgPath, outputPath);
 
     return {
       success: true,
       outputPath,
-      message: `Keynote file created: ${fileName}.key`
+      message: `Presentation created: ${fileName}.pptx`
     };
   } catch (error) {
     return {

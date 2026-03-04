@@ -1,425 +1,277 @@
-import JSZip from 'jszip';
-import { v4 as uuid } from 'uuid';
+import PptxGenJS from 'pptxgenjs';
 import { SVGShape, ParsedSVG } from './svg-parser';
 
-interface KeynoteShape {
-  id: string;
-  type: string;
-  geometry: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  };
-  fill?: string;
-  stroke?: string;
-  strokeWidth?: number;
-  content?: string;
-}
+const PX_PER_INCH = 96;
 
-export interface KeynotePresentation {
-  width: number;
-  height: number;
-  shapes: KeynoteShape[];
+function pxToInches(px: number): number {
+  return px / PX_PER_INCH;
 }
 
 /**
- * Convert parsed SVG to Keynote presentation
+ * Parse an SVG color value to a 6-char hex string (no #), or null for none/transparent.
  */
-export function convertSVGToKeynote(svg: ParsedSVG): KeynotePresentation {
-  const shapes: KeynoteShape[] = [];
+function parseColor(svgColor: string | undefined): string | null {
+  if (!svgColor || svgColor === 'none' || svgColor === 'transparent') return null;
 
-  // Process all shapes in the SVG
-  if (svg.shapes) {
-    processShapes(svg.shapes, shapes, svg.width, svg.height);
-  }
-
-  return {
-    width: svg.width,
-    height: svg.height,
-    shapes
-  };
-}
-
-/**
- * Recursively process SVG shapes
- */
-function processShapes(
-  svgShapes: SVGShape[],
-  keynoteShapes: KeynoteShape[],
-  svgWidth: number,
-  svgHeight: number
-): void {
-  for (const shape of svgShapes) {
-    if (shape.type === 'g') {
-      // Groups can contain children
-      if (shape.children) {
-        processShapes(shape.children, keynoteShapes, svgWidth, svgHeight);
-      }
-    } else if (shape.type === 'rect') {
-      keynoteShapes.push(convertRect(shape, svgWidth, svgHeight));
-    } else if (shape.type === 'circle') {
-      keynoteShapes.push(convertCircle(shape, svgWidth, svgHeight));
-    } else if (shape.type === 'ellipse') {
-      keynoteShapes.push(convertEllipse(shape, svgWidth, svgHeight));
-    } else if (shape.type === 'line') {
-      keynoteShapes.push(convertLine(shape, svgWidth, svgHeight));
-    } else if (shape.type === 'path') {
-      keynoteShapes.push(convertPath(shape, svgWidth, svgHeight));
-    } else if (shape.type === 'polygon' || shape.type === 'polyline') {
-      keynoteShapes.push(convertPolygon(shape, svgWidth, svgHeight));
-    } else if (shape.type === 'text') {
-      keynoteShapes.push(convertText(shape, svgWidth, svgHeight));
+  if (svgColor.startsWith('#')) {
+    let hex = svgColor.slice(1);
+    if (hex.length === 3) {
+      hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
     }
+    return hex.toUpperCase();
   }
-}
 
-function convertRect(shape: SVGShape, svgWidth: number, svgHeight: number): KeynoteShape {
-  const x = parseFloat(shape.attributes.x || '0');
-  const y = parseFloat(shape.attributes.y || '0');
-  const width = parseFloat(shape.attributes.width || '100');
-  const height = parseFloat(shape.attributes.height || '100');
-  const fill = shape.attributes.fill || '#FFFFFF';
-  const stroke = shape.attributes.stroke;
-  const strokeWidth = shape.attributes['stroke-width'] ? parseFloat(shape.attributes['stroke-width']) : undefined;
+  const rgbMatch = svgColor.match(/rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/);
+  if (rgbMatch) {
+    const r = parseInt(rgbMatch[1]).toString(16).padStart(2, '0');
+    const g = parseInt(rgbMatch[2]).toString(16).padStart(2, '0');
+    const b = parseInt(rgbMatch[3]).toString(16).padStart(2, '0');
+    return (r + g + b).toUpperCase();
+  }
 
-  return {
-    id: uuid(),
-    type: 'shape',
-    geometry: { x, y, width, height },
-    fill: convertColor(fill),
-    stroke: stroke ? convertColor(stroke) : undefined,
-    strokeWidth
+  const colorMap: Record<string, string> = {
+    white: 'FFFFFF', black: '000000', red: 'FF0000', green: '008000',
+    blue: '0000FF', yellow: 'FFFF00', cyan: '00FFFF', magenta: 'FF00FF',
+    gray: '808080', grey: '808080', orange: 'FFA500', purple: '800080',
+    pink: 'FFC0CB', brown: 'A52A2A', navy: '000080', teal: '008080',
+    maroon: '800000', olive: '808000', lime: '00FF00', aqua: '00FFFF',
+    silver: 'C0C0C0', fuchsia: 'FF00FF',
   };
+
+  return colorMap[svgColor.toLowerCase()] || null;
 }
 
-function convertCircle(shape: SVGShape, svgWidth: number, svgHeight: number): KeynoteShape {
+function getShapeStyle(shape: SVGShape) {
+  const fillColor = parseColor(shape.attributes.fill);
+  const strokeColor = parseColor(shape.attributes.stroke);
+  const strokeWidth = shape.attributes['stroke-width']
+    ? parseFloat(shape.attributes['stroke-width'])
+    : undefined;
+  return { fillColor, strokeColor, strokeWidth };
+}
+
+// pptxgenjs shape type strings (runtime values from pres.shapes.*)
+const SHAPE_RECT = 'rect' as any;
+const SHAPE_ROUND_RECT = 'roundRect' as any;
+const SHAPE_OVAL = 'ellipse' as any;
+const SHAPE_LINE = 'line' as any;
+
+// ── Shape converters ────────────────────────────────────────────────
+
+function addRect(slide: PptxGenJS.Slide, shape: SVGShape): void {
+  const x = pxToInches(parseFloat(shape.attributes.x || '0'));
+  const y = pxToInches(parseFloat(shape.attributes.y || '0'));
+  const w = pxToInches(parseFloat(shape.attributes.width || '100'));
+  const h = pxToInches(parseFloat(shape.attributes.height || '100'));
+  const { fillColor, strokeColor, strokeWidth } = getShapeStyle(shape);
+
+  const hasRoundedCorners = shape.attributes.rx || shape.attributes.ry;
+  const shapeType = hasRoundedCorners ? SHAPE_ROUND_RECT : SHAPE_RECT;
+
+  const opts: any = { x, y, w, h };
+  if (hasRoundedCorners) {
+    opts.rectRadius = pxToInches(parseFloat(shape.attributes.rx || shape.attributes.ry || '0'));
+  }
+  if (fillColor) opts.fill = { color: fillColor };
+  if (strokeColor) opts.line = { color: strokeColor, width: strokeWidth || 1 };
+
+  slide.addShape(shapeType, opts);
+}
+
+function addCircle(slide: PptxGenJS.Slide, shape: SVGShape): void {
   const cx = parseFloat(shape.attributes.cx || '0');
   const cy = parseFloat(shape.attributes.cy || '0');
   const r = parseFloat(shape.attributes.r || '50');
-  const fill = shape.attributes.fill || '#FFFFFF';
-  const stroke = shape.attributes.stroke;
-  const strokeWidth = shape.attributes['stroke-width'] ? parseFloat(shape.attributes['stroke-width']) : undefined;
+  const { fillColor, strokeColor, strokeWidth } = getShapeStyle(shape);
 
-  return {
-    id: uuid(),
-    type: 'circle',
-    geometry: {
-      x: cx - r,
-      y: cy - r,
-      width: r * 2,
-      height: r * 2
-    },
-    fill: convertColor(fill),
-    stroke: stroke ? convertColor(stroke) : undefined,
-    strokeWidth
+  const opts: any = {
+    x: pxToInches(cx - r),
+    y: pxToInches(cy - r),
+    w: pxToInches(r * 2),
+    h: pxToInches(r * 2),
   };
+  if (fillColor) opts.fill = { color: fillColor };
+  if (strokeColor) opts.line = { color: strokeColor, width: strokeWidth || 1 };
+
+  slide.addShape(SHAPE_OVAL, opts);
 }
 
-function convertEllipse(shape: SVGShape, svgWidth: number, svgHeight: number): KeynoteShape {
+function addEllipse(slide: PptxGenJS.Slide, shape: SVGShape): void {
   const cx = parseFloat(shape.attributes.cx || '0');
   const cy = parseFloat(shape.attributes.cy || '0');
   const rx = parseFloat(shape.attributes.rx || '50');
   const ry = parseFloat(shape.attributes.ry || '50');
-  const fill = shape.attributes.fill || '#FFFFFF';
-  const stroke = shape.attributes.stroke;
-  const strokeWidth = shape.attributes['stroke-width'] ? parseFloat(shape.attributes['stroke-width']) : undefined;
+  const { fillColor, strokeColor, strokeWidth } = getShapeStyle(shape);
 
-  return {
-    id: uuid(),
-    type: 'ellipse',
-    geometry: {
-      x: cx - rx,
-      y: cy - ry,
-      width: rx * 2,
-      height: ry * 2
-    },
-    fill: convertColor(fill),
-    stroke: stroke ? convertColor(stroke) : undefined,
-    strokeWidth
+  const opts: any = {
+    x: pxToInches(cx - rx),
+    y: pxToInches(cy - ry),
+    w: pxToInches(rx * 2),
+    h: pxToInches(ry * 2),
   };
+  if (fillColor) opts.fill = { color: fillColor };
+  if (strokeColor) opts.line = { color: strokeColor, width: strokeWidth || 1 };
+
+  slide.addShape(SHAPE_OVAL, opts);
 }
 
-function convertLine(shape: SVGShape, svgWidth: number, svgHeight: number): KeynoteShape {
-  const x1 = parseFloat(shape.attributes.x1 || '0');
-  const y1 = parseFloat(shape.attributes.y1 || '0');
-  const x2 = parseFloat(shape.attributes.x2 || '0');
-  const y2 = parseFloat(shape.attributes.y2 || '0');
-  const stroke = shape.attributes.stroke || '#000000';
-  const strokeWidth = shape.attributes['stroke-width'] ? parseFloat(shape.attributes['stroke-width']) : 1;
+function addLine(slide: PptxGenJS.Slide, shape: SVGShape): void {
+  const x1 = pxToInches(parseFloat(shape.attributes.x1 || '0'));
+  const y1 = pxToInches(parseFloat(shape.attributes.y1 || '0'));
+  const x2 = pxToInches(parseFloat(shape.attributes.x2 || '0'));
+  const y2 = pxToInches(parseFloat(shape.attributes.y2 || '0'));
+  const strokeColor = parseColor(shape.attributes.stroke) || '000000';
+  const strokeWidth = shape.attributes['stroke-width']
+    ? parseFloat(shape.attributes['stroke-width'])
+    : 1;
 
-  const x = Math.min(x1, x2);
-  const y = Math.min(y1, y2);
-  const width = Math.abs(x2 - x1);
-  const height = Math.abs(y2 - y1);
-
-  return {
-    id: uuid(),
-    type: 'line',
-    geometry: { x, y, width: width || 1, height: height || 1 },
-    stroke: convertColor(stroke),
-    strokeWidth
-  };
+  slide.addShape(SHAPE_LINE, {
+    x: x1,
+    y: y1,
+    w: x2 - x1,
+    h: y2 - y1,
+    line: { color: strokeColor, width: strokeWidth },
+  });
 }
 
-function convertPath(shape: SVGShape, svgWidth: number, svgHeight: number): KeynoteShape {
-  // Simplified path handling - get bounding box
-  const d = shape.attributes.d || '';
-  const bbox = calculatePathBoundingBox(d);
-  const fill = shape.attributes.fill;
-  const stroke = shape.attributes.stroke;
-  const strokeWidth = shape.attributes['stroke-width'] ? parseFloat(shape.attributes['stroke-width']) : undefined;
-
-  return {
-    id: uuid(),
-    type: 'path',
-    geometry: bbox,
-    fill: fill ? convertColor(fill) : undefined,
-    stroke: stroke ? convertColor(stroke) : undefined,
-    strokeWidth,
-    content: d
-  };
-}
-
-function convertPolygon(shape: SVGShape, svgWidth: number, svgHeight: number): KeynoteShape {
-  const points = shape.attributes.points || '';
-  const coords = parsePoints(points);
-  const bbox = calculatePointsBoundingBox(coords);
-  const fill = shape.attributes.fill || '#FFFFFF';
-  const stroke = shape.attributes.stroke;
-  const strokeWidth = shape.attributes['stroke-width'] ? parseFloat(shape.attributes['stroke-width']) : undefined;
-
-  return {
-    id: uuid(),
-    type: shape.type === 'polygon' ? 'polygon' : 'polyline',
-    geometry: bbox,
-    fill: convertColor(fill),
-    stroke: stroke ? convertColor(stroke) : undefined,
-    strokeWidth,
-    content: points
-  };
-}
-
-function convertText(shape: SVGShape, svgWidth: number, svgHeight: number): KeynoteShape {
+function addText(slide: PptxGenJS.Slide, shape: SVGShape): void {
   const x = parseFloat(shape.attributes.x || '0');
   const y = parseFloat(shape.attributes.y || '0');
-  const fontSize = shape.attributes['font-size'] ? parseFloat(shape.attributes['font-size']) : 12;
-  const fill = shape.attributes.fill || '#000000';
+  const fontSize = shape.attributes['font-size']
+    ? parseFloat(shape.attributes['font-size'])
+    : 12;
+  const fillColor = parseColor(shape.attributes.fill) || '000000';
   const content = shape.content || '';
+  const fontFamily = shape.attributes['font-family'] || 'Helvetica';
 
-  return {
-    id: uuid(),
-    type: 'text',
-    geometry: {
-      x,
-      y,
-      width: content.length * (fontSize * 0.6),
-      height: fontSize
-    },
-    fill: convertColor(fill),
-    content
-  };
+  slide.addText(content, {
+    x: pxToInches(x),
+    y: pxToInches(y - fontSize), // SVG text y is baseline; shift up
+    w: pxToInches(content.length * fontSize * 0.6 + 20),
+    h: pxToInches(fontSize * 1.5),
+    fontSize,
+    fontFace: fontFamily.replace(/'/g, ''),
+    color: fillColor,
+    autoFit: true,
+  });
 }
 
-function calculatePathBoundingBox(d: string): { x: number; y: number; width: number; height: number } {
-  // Very simplified - extracts numbers from path data
+function addPathAsFallback(slide: PptxGenJS.Slide, shape: SVGShape): void {
+  let bbox: { x: number; y: number; w: number; h: number };
+
+  if (shape.type === 'path') {
+    bbox = calculatePathBBox(shape.attributes.d || '');
+  } else {
+    bbox = calculatePointsBBox(shape.attributes.points || '');
+  }
+
+  const { fillColor, strokeColor, strokeWidth } = getShapeStyle(shape);
+
+  const opts: any = {
+    x: pxToInches(bbox.x),
+    y: pxToInches(bbox.y),
+    w: pxToInches(bbox.w),
+    h: pxToInches(bbox.h),
+  };
+  if (fillColor) opts.fill = { color: fillColor };
+  if (strokeColor) opts.line = { color: strokeColor, width: strokeWidth || 1 };
+
+  slide.addShape(SHAPE_RECT, opts);
+}
+
+// ── Bounding-box helpers ────────────────────────────────────────────
+
+function calculatePathBBox(d: string) {
   const numbers = d.match(/-?\d+\.?\d*/g) || [];
-  const nums = numbers.map(n => parseFloat(n));
+  const nums = numbers.map(Number);
+  if (nums.length < 2) return { x: 0, y: 0, w: 100, h: 100 };
 
-  if (nums.length === 0) {
-    return { x: 0, y: 0, width: 100, height: 100 };
-  }
-
-  // Assume coordinates come in pairs (x, y)
-  const xCoords = [];
-  const yCoords = [];
-
+  const xs: number[] = [];
+  const ys: number[] = [];
   for (let i = 0; i < nums.length; i += 2) {
-    if (i < nums.length) xCoords.push(nums[i]);
-    if (i + 1 < nums.length) yCoords.push(nums[i + 1]);
+    xs.push(nums[i]);
+    if (i + 1 < nums.length) ys.push(nums[i + 1]);
   }
-
-  const minX = Math.min(...xCoords);
-  const maxX = Math.max(...xCoords);
-  const minY = Math.min(...yCoords);
-  const maxY = Math.max(...yCoords);
-
-  return {
-    x: minX,
-    y: minY,
-    width: maxX - minX || 100,
-    height: maxY - minY || 100
-  };
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  return { x: minX, y: minY, w: (maxX - minX) || 100, h: (maxY - minY) || 100 };
 }
 
-function calculatePointsBoundingBox(coords: number[][]): { x: number; y: number; width: number; height: number } {
-  if (coords.length === 0) {
-    return { x: 0, y: 0, width: 100, height: 100 };
+function calculatePointsBBox(points: string) {
+  const pairs = points.trim().split(/\s+/);
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const pair of pairs) {
+    const [x, y] = pair.split(',').map(Number);
+    if (!isNaN(x)) xs.push(x);
+    if (!isNaN(y)) ys.push(y);
   }
-
-  const xs = coords.map(c => c[0]);
-  const ys = coords.map(c => c[1]);
+  if (xs.length === 0 || ys.length === 0) return { x: 0, y: 0, w: 100, h: 100 };
 
   const minX = Math.min(...xs);
   const maxX = Math.max(...xs);
   const minY = Math.min(...ys);
   const maxY = Math.max(...ys);
-
-  return {
-    x: minX,
-    y: minY,
-    width: maxX - minX || 100,
-    height: maxY - minY || 100
-  };
+  return { x: minX, y: minY, w: (maxX - minX) || 100, h: (maxY - minY) || 100 };
 }
 
-function parsePoints(points: string): number[][] {
-  const coords: number[][] = [];
-  const pairs = points.trim().split(/\s+/);
+// ── Recursive shape walker ──────────────────────────────────────────
 
-  for (const pair of pairs) {
-    const [x, y] = pair.split(',').map(v => parseFloat(v));
-    if (!isNaN(x) && !isNaN(y)) {
-      coords.push([x, y]);
+function addShapesToSlide(slide: PptxGenJS.Slide, shapes: SVGShape[]): void {
+  for (const shape of shapes) {
+    try {
+      switch (shape.type) {
+        case 'g':
+          if (shape.children) addShapesToSlide(slide, shape.children);
+          break;
+        case 'rect':
+          addRect(slide, shape);
+          break;
+        case 'circle':
+          addCircle(slide, shape);
+          break;
+        case 'ellipse':
+          addEllipse(slide, shape);
+          break;
+        case 'line':
+          addLine(slide, shape);
+          break;
+        case 'text':
+          addText(slide, shape);
+          break;
+        case 'path':
+        case 'polygon':
+        case 'polyline':
+          addPathAsFallback(slide, shape);
+          break;
+      }
+    } catch (e) {
+      console.warn(`Skipping shape type="${shape.type}":`, e);
     }
   }
-
-  return coords;
 }
 
-function convertColor(svgColor: string): string {
-  // Convert SVG color to RGB hex
-  if (svgColor.startsWith('#')) {
-    return svgColor;
-  }
-
-  // Map common color names
-  const colorMap: Record<string, string> = {
-    'white': '#FFFFFF',
-    'black': '#000000',
-    'red': '#FF0000',
-    'green': '#00FF00',
-    'blue': '#0000FF',
-    'yellow': '#FFFF00',
-    'cyan': '#00FFFF',
-    'magenta': '#FF00FF',
-    'gray': '#808080',
-    'grey': '#808080',
-    'transparent': '#00000000'
-  };
-
-  return colorMap[svgColor.toLowerCase()] || '#FFFFFF';
-}
+// ── Public API ──────────────────────────────────────────────────────
 
 /**
- * Generate Keynote file as buffer
+ * Generate a PPTX buffer from a parsed SVG.
+ * Keynote opens PPTX natively with full shape editability.
  */
-export async function generateKeynoteFile(presentation: KeynotePresentation): Promise<Buffer> {
-  const zip = new JSZip();
+export async function generatePresentationFile(svg: ParsedSVG): Promise<Buffer> {
+  const pres = new PptxGenJS();
 
-  // Add Index file
-  const indexXML = generateIndexXML(presentation);
-  zip.file('Index.xml', indexXML);
+  const widthInches = pxToInches(svg.width);
+  const heightInches = pxToInches(svg.height);
+  pres.defineLayout({ name: 'SVG', width: widthInches, height: heightInches });
+  pres.layout = 'SVG';
 
-  // Add metadata files
-  zip.file('BuildVersionHistory.plist', generateBuildVersionHistory());
-  zip.file('Metadata/DocumentMetadata.plist', generateDocumentMetadata());
-  zip.file('Metadata/Properties.plist', generateProperties());
+  const slide = pres.addSlide();
 
-  // Convert to buffer
-  return zip.generateAsync({ type: 'nodebuffer' });
-}
-
-function generateIndexXML(presentation: KeynotePresentation): string {
-  let shapesXML = '';
-
-  for (const shape of presentation.shapes) {
-    shapesXML += generateShapeXML(shape);
+  if (svg.shapes && svg.shapes.length > 0) {
+    addShapesToSlide(slide, svg.shapes);
   }
 
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE package>
-<package version="1.0">
-  <slide uidref="SLD000">
-    <masterRef uidref="MST000"/>
-    <geometry width="${presentation.width}" height="${presentation.height}"/>
-    <layer>
-      ${shapesXML}
-    </layer>
-  </slide>
-</package>`;
-}
-
-function generateShapeXML(shape: KeynoteShape): string {
-  const { id, type, geometry, fill, stroke, strokeWidth, content } = shape;
-
-  let shapeElement = '';
-
-  if (type === 'circle') {
-    shapeElement = `<shape uidref="${id}">
-      <geometry x="${geometry.x}" y="${geometry.y}" w="${geometry.width}" h="${geometry.height}"/>
-      <style fill="${fill || '#FFFFFF'}" ${stroke ? `stroke="${stroke}"` : ''} ${strokeWidth ? `strokeWidth="${strokeWidth}"` : ''}/>
-    </shape>`;
-  } else if (type === 'text') {
-    shapeElement = `<shape uidref="${id}">
-      <geometry x="${geometry.x}" y="${geometry.y}" w="${geometry.width}" h="${geometry.height}"/>
-      <text>${escapeXML(content || '')}</text>
-      <style fill="${fill || '#000000'}"/>
-    </shape>`;
-  } else {
-    shapeElement = `<shape uidref="${id}">
-      <geometry x="${geometry.x}" y="${geometry.y}" w="${geometry.width}" h="${geometry.height}"/>
-      <style fill="${fill || '#FFFFFF'}" ${stroke ? `stroke="${stroke}"` : ''} ${strokeWidth ? `strokeWidth="${strokeWidth}"` : ''}/>
-    </shape>`;
-  }
-
-  return shapeElement;
-}
-
-function generateBuildVersionHistory(): string {
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>BuildVersionHistory</key>
-  <array>
-    <string>M15.2</string>
-  </array>
-</dict>
-</plist>`;
-}
-
-function generateDocumentMetadata(): string {
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Author</key>
-  <string>SVGKeynote</string>
-  <key>CreationDate</key>
-  <date>${new Date().toISOString()}</date>
-  <key>ModificationDate</key>
-  <date>${new Date().toISOString()}</date>
-</dict>
-</plist>`;
-}
-
-function generateProperties(): string {
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>ShowPresenterNotes</key>
-  <true/>
-</dict>
-</plist>`;
-}
-
-function escapeXML(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
+  return (await pres.write({ outputType: 'nodebuffer' })) as Buffer;
 }

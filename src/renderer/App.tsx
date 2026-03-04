@@ -174,8 +174,7 @@ export function App() {
 
           <div className="info-box">
             <p>
-              🎉 Your Keynote file is ready! All SVG shapes are now natively editable in
-              Apple Keynote.
+              🎉 Your file is ready! Open the .pptx in Keynote — all shapes are natively editable.
             </p>
           </div>
         </div>
