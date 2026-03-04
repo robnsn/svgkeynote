@@ -14,10 +14,9 @@ mac:
     - dmg
     - zip
   category: public.app-category.productivity
-  hardenedRuntime: true
+  sign: false
+  hardenedRuntime: false
   gatekeeperAssess: false
-  entitlements: assets/entitlements.mac.plist
-  entitlementsInherit: assets/entitlements.mac.plist
   defaultArch: arm64
 
 dmg:
