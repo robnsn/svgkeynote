@@ -10,6 +10,7 @@ Convert SVG files into Apple Keynote presentations with natively editable shapes
 - 🔄 Batch conversion ready
 - 💾 Creates valid .key files that open in Keynote
 - 🛠️ CLI tool for easy use
+- 🖥️ Native macOS desktop app with drag-and-drop support
 
 ## Installation
 
@@ -44,6 +45,32 @@ svgkeynote diagram.svg
 # Convert diagram.svg to my-presentation.key
 svgkeynote diagram.svg my-presentation.key
 ```
+
+### Desktop App
+
+The SVG to Keynote desktop app provides a simple, visual interface for converting SVG files on macOS.
+
+**Features:**
+- Drag and drop SVG files directly onto the app
+- Automatic conversion with progress indicator
+- Saves Keynote files in the same folder as the original SVG
+- Open results directly in Finder
+
+**Building the App:**
+
+```bash
+npm run electron:build
+```
+
+This will create a distributable macOS app in the `release/` directory.
+
+**Development:**
+
+```bash
+npm run dev:app
+```
+
+This starts the development server on port 5173 and launches the Electron app.
 
 ### Programmatic Usage
 
@@ -100,16 +127,49 @@ npm install
 npm run build
 ```
 
+### Development Modes
+
+**CLI Tool:**
+```bash
+npm run dev -- input.svg output.key
+```
+
+**Desktop App:**
+```bash
+npm run dev:app
+```
+
+This will:
+1. Start the Vite dev server on http://localhost:5173
+2. Launch the Electron app
+3. Enable hot reload for React components
+
+### Building
+
+**All targets:**
+```bash
+npm run build
+```
+
+**CLI only:**
+```bash
+npm run build:cli
+```
+
+**Desktop app and Electron:**
+```bash
+npm run build:app
+```
+
+**Packaged macOS app:**
+```bash
+npm run electron:build
+```
+
 ### Testing
 
 ```bash
 npm test
-```
-
-### Development Server
-
-```bash
-npm run dev -- input.svg output.key
 ```
 
 ## Architecture
@@ -120,6 +180,10 @@ npm run dev -- input.svg output.key
 - **keynote-generator.ts** - Converts parsed SVG to Keynote format and generates .key files
 - **index.ts** - Main converter API
 - **cli.ts** - Command-line interface
+- **main.ts** - Electron main process (window management, file handling)
+- **preload.ts** - Electron preload script (secure IPC bridge)
+- **renderer/App.tsx** - React frontend for the desktop app
+- **renderer/App.css** - Styling for the desktop interface
 
 ### How It Works
 

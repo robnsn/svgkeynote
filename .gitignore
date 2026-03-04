@@ -1,5 +1,8 @@
 node_modules/
 dist/
+lib/
+build/
+release/
 *.key
 *.svg
 .DS_Store

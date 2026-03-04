@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./lib"
+  },
+  "include": ["src/cli.ts", "src/index.ts", "src/svg-parser.ts", "src/keynote-generator.ts"],
+  "exclude": ["src/main.ts", "src/preload.ts", "src/renderer/**/*"]
+}
