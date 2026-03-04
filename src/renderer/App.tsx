@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import './App.css';
 
 interface ConversionStatus {
@@ -93,6 +93,13 @@ export function App() {
   const reset = () => {
     setStatus({ isConverting: false });
   };
+
+  useEffect(() => {
+    // Listen for files dropped on the dock icon
+    window.electronAPI.onFileDropped((filePath: string) => {
+      convertSVGFile(filePath);
+    });
+  }, []);
 
   return (
     <div className="app">

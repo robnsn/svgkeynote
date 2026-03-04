@@ -4,6 +4,7 @@ import { convertSVGToKeynoteFile } from './index';
 import { existsSync } from 'fs';
 
 let mainWindow: BrowserWindow | null = null;
+let pendingFilePath: string | null = null;
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -34,6 +35,16 @@ function createWindow() {
     mainWindow = null;
   });
 
+  // Wait for window to be ready before processing pending file
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (pendingFilePath) {
+      const filePath = pendingFilePath;
+      pendingFilePath = null;
+      // Send the file path to the renderer process
+      mainWindow?.webContents.send('file-dropped', filePath);
+    }
+  });
+
   // Handle drag and drop
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (input.control && input.key.toLowerCase() === 'o') {
@@ -53,6 +64,30 @@ app.on('window-all-closed', () => {
 
 app.on('activate', () => {
   if (mainWindow === null) {
+    createWindow();
+  }
+});
+
+/**
+ * Handle files dropped on the app icon in the macOS dock
+ * This is fired when the user drops files on the app icon
+ */
+app.on('open-file', (event, filePath) => {
+  event.preventDefault();
+
+  // Check if it's an SVG file
+  if (!filePath.endsWith('.svg')) {
+    return;
+  }
+
+  pendingFilePath = filePath;
+
+  // If window is already open, send the file immediately
+  if (mainWindow) {
+    mainWindow.webContents.send('file-dropped', filePath);
+    mainWindow.focus();
+  } else {
+    // Otherwise create the window and it will be sent on ready
     createWindow();
   }
 });

@@ -20,7 +20,13 @@ const api = {
     ipcRenderer.invoke('open-file'),
 
   openInFinder: (filePath: string): Promise<FinderResult> =>
-    ipcRenderer.invoke('open-in-finder', filePath)
+    ipcRenderer.invoke('open-in-finder', filePath),
+
+  onFileDropped: (callback: (filePath: string) => void) => {
+    ipcRenderer.on('file-dropped', (event, filePath) => {
+      callback(filePath);
+    });
+  }
 };
 
 contextBridge.exposeInMainWorld('electronAPI', api);
