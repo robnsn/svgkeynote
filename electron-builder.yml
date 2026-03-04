@@ -14,11 +14,13 @@ mac:
     - dmg
     - zip
   category: public.app-category.productivity
-  icon: assets/icon.icns
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: assets/entitlements.mac.plist
   entitlementsInherit: assets/entitlements.mac.plist
+  arch:
+    - arm64
+    - x64
 
 dmg:
   contents:
